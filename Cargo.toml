@@ -1,0 +1,20 @@
+[package]
+name = "tokio-dstip"
+version = "0.1.0"
+edition = "2024"
+authors = ["Gavin Henry <ghenry@sentrypeer.org>"]
+description = "Get a packet's destination IP address whilst using Tokio on Linux and macOS"
+categories = ["api-bindings", "network-programming"]
+license = "MIT"
+repository = "https://github.com/SentryPeer/tokio-dstip"
+readme = "README.md"
+
+[dependencies]
+tokio = { version = "1", features = ["full" ] }
+nix = { version = "0.27", features = ["net", "socket", "uio"] }
+socket2 = "0.5"
+libc = "0.2"
+
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
