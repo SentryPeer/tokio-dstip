@@ -11,7 +11,7 @@ readme = "README.md"
 
 [dependencies]
 tokio = { version = "1", features = ["full" ] }
-nix = { version = "0.27", features = ["net", "socket", "uio"] }
+nix = { version = "0.29.0", features = ["net", "socket", "uio"] }
 socket2 = "0.5"
 libc = "0.2"
 
