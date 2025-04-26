@@ -8,6 +8,17 @@ Get a packet's destination IP address whilst using Tokio on Linux and macOS
 - Native `tokio::net` compatibility
 - TLS-friendly: works with `tokio_rustls` and other wrappers
 
+[![Crates.io][crates-badge]][crates-url]
+[![MIT licensed][mit-badge]][mit-url]
+[![CI][actions-badge]][actions-url]
+
+[crates-badge]: https://img.shields.io/crates/v/tokio-dstip.svg
+[crates-url]: https://crates.io/crates/tokio-dstip
+[mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
+[mit-url]: https://github.com/tokio-rs/tokio/blob/master/LICENSE
+[actions-badge]: https://github.com/SentryPeer/tokio-dstip/actions/workflows/ci.yml/badge.svg
+[actions-url]: https://github.com/SentryPeer/tokio-dstip/actions/workflows/ci.yml
+
 ## Install
 ```toml
 [dependencies]
