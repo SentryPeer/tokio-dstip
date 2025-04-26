@@ -15,7 +15,7 @@ Get a packet's destination IP address whilst using Tokio on Linux and macOS
 [crates-badge]: https://img.shields.io/crates/v/tokio-dstip.svg
 [crates-url]: https://crates.io/crates/tokio-dstip
 [mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
-[mit-url]: https://github.com/tokio-rs/tokio/blob/master/LICENSE
+[mit-url]: https://github.com/SentryPeer/tokio-dstip/blob/main/LICENSE
 [actions-badge]: https://github.com/SentryPeer/tokio-dstip/actions/workflows/ci.yml/badge.svg
 [actions-url]: https://github.com/SentryPeer/tokio-dstip/actions/workflows/ci.yml
 
