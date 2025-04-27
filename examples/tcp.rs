@@ -3,8 +3,8 @@ use tokio_dstip::TcpListenerWithDst;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let listener = TcpListenerWithDst::bind("0.0.0.0:8080".parse().unwrap()).await?;
-    println!("Listening for TCP on 0.0.0.0:8080...");
+    let listener = TcpListenerWithDst::bind("0.0.0.0:8088".parse().unwrap()).await?;
+    println!("Listening for TCP on 0.0.0.0:8088...");
 
     loop {
         let (mut stream, peer, dst) = listener.accept_with_dst().await?;

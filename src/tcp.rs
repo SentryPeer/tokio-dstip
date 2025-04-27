@@ -2,7 +2,7 @@
 // Copyright (c) 2025 Gavin Henry <ghenry@sentrypeer.org>
 
 use std::net::{IpAddr, SocketAddr};
-use std::os::fd::{AsRawFd};
+use std::os::fd::AsRawFd;
 use tokio::net::{TcpListener, TcpStream};
 
 #[cfg(target_os = "macos")]
@@ -10,8 +10,6 @@ use nix::sys::socket::getsockname;
 #[cfg(target_os = "macos")]
 use socket2::SockAddr;
 
-#[cfg(target_os = "linux")]
-use nix::sys::socket::{getsockopt, sockopt::OriginalDst};
 use socket2::SockAddr;
 
 pub struct TcpListenerWithDst {

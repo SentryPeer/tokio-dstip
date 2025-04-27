@@ -1,23 +1,34 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 Gavin Henry <ghenry@sentrypeer.org>
 
-use std::io::IoSliceMut;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::os::unix::io::AsRawFd;
 
-use nix::sys::socket::{
-    ControlMessageOwned, MsgFlags, RecvMsg, SockaddrStorage, recvmsg, setsockopt, sockopt,
-};
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::io::unix::AsyncFd;
 
-/// Platform abstraction
 #[cfg(target_os = "linux")]
 fn enable_pktinfo(fd: i32, ipv6: bool) {
-    if ipv6 {
-        setsockopt(&fd, sockopt::Ipv6RecvPacketInfo, &true).expect("IPV6_PKTINFO failed");
-    } else {
-        setsockopt(fd, sockopt::Ipv4PacketInfo, &true).expect("IP_PKTINFO failed");
+    use nix::libc::{IP_PKTINFO, IPV6_RECVPKTINFO, SOL_IP, SOL_IPV6};
+    unsafe {
+        let optval: libc::c_int = 1;
+        if ipv6 {
+            libc::setsockopt(
+                fd,
+                SOL_IPV6,
+                IPV6_RECVPKTINFO,
+                &optval as *const _ as *const _,
+                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            );
+        } else {
+            libc::setsockopt(
+                fd,
+                SOL_IP,
+                IP_PKTINFO,
+                &optval as *const _ as *const _,
+                std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+            );
+        }
     }
 }
 
@@ -72,52 +83,96 @@ impl UdpSocketWithDst {
     /// Receive a UDP packet, returning (data, source addr, destination IP)
     pub async fn recv_from(&self) -> std::io::Result<(Vec<u8>, SocketAddr, std::net::IpAddr)> {
         let mut buf = [0u8; 1500];
-        let mut cmsgspace = nix::cmsg_space!([u8; 128]); // enough for control messages
-        let iov = [IoSliceMut::new(&mut buf)];
+
+        // Allocate buffer for control message
+        let mut cmsg_buf = vec![0u8; 256];
 
         loop {
-            let mut guard = self.async_fd.readable().await?;
-            let raw_fd = guard.as_raw_fd();
-            match recvmsg::<SockaddrStorage>(raw_fd, &iov, Some(&mut cmsgspace), MsgFlags::empty())
-            {
-                Ok(msg) => {
-                    let source = msg.address.expect("Missing source address");
-                    let data = buf[..msg.bytes].to_vec();
-                    let dst_ip = extract_dst_ip(&msg).unwrap_or(std::net::IpAddr::UNSPECIFIED);
-                    return Ok((data, sockaddr_to_std(&source), dst_ip));
+            let guard = self.async_fd.readable().await?;
+            let raw_fd = guard.get_ref().as_raw_fd();
+
+            // Prepare msghdr for recvmsg
+            let mut iovec = libc::iovec {
+                iov_base: buf.as_mut_ptr() as *mut libc::c_void,
+                iov_len: buf.len(),
+            };
+
+            let mut src_addr: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+            let src_addr_len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+
+            let mut msghdr: libc::msghdr = unsafe { std::mem::zeroed() };
+            msghdr.msg_name = &mut src_addr as *mut _ as *mut libc::c_void;
+            msghdr.msg_namelen = src_addr_len;
+            msghdr.msg_iov = &mut iovec;
+            msghdr.msg_iovlen = 1;
+            msghdr.msg_control = cmsg_buf.as_mut_ptr() as *mut libc::c_void;
+            msghdr.msg_controllen = cmsg_buf.len() as _;
+
+            let received = unsafe { libc::recvmsg(raw_fd, &mut msghdr, 0) };
+
+            if received < 0 {
+                let err = std::io::Error::last_os_error();
+                if err.kind() == std::io::ErrorKind::WouldBlock {
+                    continue;
                 }
-                Err(e) if e == nix::errno::Errno::EWOULDBLOCK => continue,
-                Err(e) => return Err(std::io::Error::from(e)),
+                return Err(err);
             }
+
+            // Extract source address
+            let src_addr = unsafe { socket2::SockAddr::new(src_addr, src_addr_len) };
+            let src = src_addr.as_socket().ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::Other, "Invalid source address")
+            })?;
+
+            // Extract destination IP
+            let dst_ip = extract_dst_ip_from_msghdr(&msghdr)
+                .unwrap_or(std::net::IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+
+            // Extract data
+            let data = buf[..received as usize].to_vec();
+
+            return Ok((data, src, dst_ip));
         }
     }
 }
 
-fn sockaddr_to_std(addr: &SockaddrStorage) -> SocketAddr {
-    nix::sys::socket::Sockaddr::from(*addr)
-        .as_socket()
-        .expect("Not a socket address")
-}
+fn extract_dst_ip_from_msghdr(msghdr: &libc::msghdr) -> Option<std::net::IpAddr> {
+    let mut cmsg: *mut libc::cmsghdr = unsafe { libc::CMSG_FIRSTHDR(msghdr) };
+    while !cmsg.is_null() {
+        let cmsghdr = unsafe { &*cmsg };
 
-fn extract_dst_ip(msg: &RecvMsg) -> Option<std::net::IpAddr> {
-    for cmsg in msg.cmsgs() {
-        match cmsg {
-            #[cfg(target_os = "linux")]
-            ControlMessageOwned::Ipv4PacketInfo(pktinfo) => {
-                return Some(Ipv4Addr::from(pktinfo.ipi_addr.s_addr.to_ne_bytes()).into());
+        #[cfg(target_os = "linux")]
+        {
+            if cmsghdr.cmsg_level == libc::SOL_IP && cmsghdr.cmsg_type == libc::IP_PKTINFO {
+                let pktinfo = unsafe { *(libc::CMSG_DATA(cmsg) as *const libc::in_pktinfo) };
+                return Some(std::net::IpAddr::V4(Ipv4Addr::from(u32::from_be(
+                    pktinfo.ipi_addr.s_addr,
+                ))));
+            } else if cmsghdr.cmsg_level == libc::SOL_IPV6
+                && cmsghdr.cmsg_type == libc::IPV6_PKTINFO
+            {
+                let pktinfo = unsafe { *(libc::CMSG_DATA(cmsg) as *const libc::in6_pktinfo) };
+                return Some(std::net::IpAddr::V6(std::net::Ipv6Addr::from(
+                    pktinfo.ipi6_addr.s6_addr,
+                )));
             }
-            #[cfg(target_os = "linux")]
-            ControlMessageOwned::Ipv6PacketInfo(pktinfo) => {
-                return Some(pktinfo.ipi6_addr.into());
-            }
-            #[cfg(target_os = "macos")]
-            ControlMessageOwned::Other(libc::IP_RECVDSTADDR, data) => {
-                if data.len() == 4 {
-                    return Some(Ipv4Addr::new(data[0], data[1], data[2], data[3]).into());
-                }
-            }
-            _ => {}
         }
+
+        #[cfg(target_os = "macos")]
+        {
+            if cmsghdr.cmsg_level == libc::IPPROTO_IP && cmsghdr.cmsg_type == libc::IP_RECVDSTADDR {
+                let addr_ptr = unsafe { libc::CMSG_DATA(cmsg) as *const u8 };
+                let mut addr = [0u8; 4];
+                unsafe {
+                    std::ptr::copy_nonoverlapping(addr_ptr, addr.as_mut_ptr(), 4);
+                }
+                return Some(std::net::IpAddr::V4(Ipv4Addr::new(
+                    addr[0], addr[1], addr[2], addr[3],
+                )));
+            }
+        }
+
+        cmsg = unsafe { libc::CMSG_NXTHDR(msghdr, cmsg) };
     }
     None
 }
@@ -144,7 +199,7 @@ mod tests {
 
         let result = timeout(Duration::from_secs(2), listener.recv_from()).await;
         assert!(result.is_ok());
-        let (data, src, dst) = result.unwrap().unwrap();
+        let (data, _src, dst) = result.unwrap().unwrap();
         assert_eq!(&data, b"hello");
         assert_eq!(dst.is_unspecified(), false);
     }
