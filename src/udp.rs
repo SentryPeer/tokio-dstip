@@ -201,6 +201,6 @@ mod tests {
         assert!(result.is_ok());
         let (data, _src, dst) = result.unwrap().unwrap();
         assert_eq!(&data, b"hello");
-        assert_eq!(dst.is_unspecified(), false);
+        assert!(!dst.is_unspecified());
     }
 }
