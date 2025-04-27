@@ -2,7 +2,7 @@
 // Copyright (c) 2025 Gavin Henry <ghenry@sentrypeer.org>
 
 use std::net::{IpAddr, SocketAddr};
-use std::os::unix::io::AsRawFd;
+use std::os::fd::{AsRawFd};
 use tokio::net::{TcpListener, TcpStream};
 
 #[cfg(target_os = "macos")]
@@ -12,6 +12,7 @@ use socket2::SockAddr;
 
 #[cfg(target_os = "linux")]
 use nix::sys::socket::{getsockopt, sockopt::OriginalDst};
+use socket2::SockAddr;
 
 pub struct TcpListenerWithDst {
     inner: TcpListener,
@@ -33,21 +34,53 @@ impl TcpListenerWithDst {
 }
 
 fn get_dst_ip(stream: &TcpStream) -> std::io::Result<IpAddr> {
-    let raw_fd = stream.as_raw_fd();
+    let fd = stream.as_raw_fd();
 
     #[cfg(target_os = "linux")]
     {
-        let sockaddr = getsockopt(raw_fd, OriginalDst)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-        Ok(sockaddr.ip())
+        let mut sockaddr = std::mem::MaybeUninit::<libc::sockaddr_storage>::uninit();
+        let mut len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+
+        // Use getsockopt to retrieve the original destination
+        let res = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_IP,
+                libc::SO_ORIGINAL_DST,
+                sockaddr.as_mut_ptr() as *mut _,
+                &mut len,
+            )
+        };
+
+        if res != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+
+        let sockaddr = unsafe { sockaddr.assume_init() };
+
+        // Use socket2::SockAddr directly
+        let sock_addr = unsafe { SockAddr::new(sockaddr, len as _) };
+
+        sock_addr
+            .as_socket()
+            .map(|addr| addr.ip())
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "Invalid socket address"))
     }
 
     #[cfg(target_os = "macos")]
     {
+        // On macOS, we use getsockname to get the local socket name
         let sockaddr =
-            getsockname(raw_fd).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-        let std_addr = SockAddr::from(sockaddr).as_socket().unwrap();
-        Ok(std_addr.ip())
+            getsockname(fd).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+        // Convert to socket2::SockAddr directly
+        let sock_addr = SockAddr::from(sockaddr);
+
+        // Extract the IP address from the socket address
+        sock_addr
+            .as_socket()
+            .map(|addr| addr.ip())
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "Invalid socket address"))
     }
 }
 
