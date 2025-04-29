@@ -10,8 +10,6 @@ use nix::sys::socket::getsockname;
 #[cfg(target_os = "macos")]
 use socket2::SockAddr;
 
-use socket2::SockAddr;
-
 pub struct TcpListenerWithDst {
     inner: TcpListener,
 }

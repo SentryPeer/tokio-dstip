@@ -34,13 +34,13 @@ fn enable_pktinfo(fd: i32, ipv6: bool) {
 
 #[cfg(target_os = "macos")]
 fn enable_pktinfo(fd: i32, ipv6: bool) {
-    use nix::libc::{IP_RECVDSTADDR, IPV6_RECVPKTINFO, SOL_IP, SOL_IPV6};
+    use nix::libc::{IP_RECVDSTADDR, IPPROTO_IP, IPPROTO_IPV6, IPV6_RECVPKTINFO};
     unsafe {
         let optval: libc::c_int = 1;
         if ipv6 {
             libc::setsockopt(
                 fd,
-                SOL_IPV6,
+                IPPROTO_IPV6,
                 IPV6_RECVPKTINFO,
                 &optval as *const _ as *const _,
                 4,
@@ -48,7 +48,7 @@ fn enable_pktinfo(fd: i32, ipv6: bool) {
         } else {
             libc::setsockopt(
                 fd,
-                SOL_IP,
+                IPPROTO_IP,
                 IP_RECVDSTADDR,
                 &optval as *const _ as *const _,
                 4,
