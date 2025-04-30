@@ -134,6 +134,38 @@ impl UdpSocketWithDst {
             return Ok((data, src, dst_ip));
         }
     }
+
+    /// Send a UDP packet to the specified address
+    pub async fn send_to(&self, data: &[u8], addr: SocketAddr) -> std::io::Result<usize> {
+        let guard = self.async_fd.writable().await?;
+        let raw_fd = guard.get_ref().as_raw_fd();
+
+        let sockaddr = socket2::SockAddr::from(addr);
+        let sent = unsafe {
+            libc::sendto(
+                raw_fd,
+                data.as_ptr() as *const libc::c_void,
+                data.len(),
+                0,
+                sockaddr.as_ptr() as *const _,
+                sockaddr.len(),
+            )
+        };
+
+        if sent < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+
+        Ok(sent as usize)
+    }
+
+    /// Get the local address of the socket
+    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        let socket_addr = self.async_fd.get_ref().local_addr()?;
+        socket_addr
+            .as_socket()
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "Invalid local address"))
+    }
 }
 
 fn extract_dst_ip_from_msghdr(msghdr: &libc::msghdr) -> Option<std::net::IpAddr> {
@@ -201,6 +233,9 @@ mod tests {
         assert!(result.is_ok());
         let (data, _src, dst) = result.unwrap().unwrap();
         assert_eq!(&data, b"hello");
+
+        let local_addr = listener.local_addr().unwrap();
+        assert_eq!(local_addr, addr);
         assert!(!dst.is_unspecified());
     }
 }

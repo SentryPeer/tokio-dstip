@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2025 Gavin Henry <ghenry@sentrypeer.org>
 
+use socket2::SockAddr;
 use std::net::{IpAddr, SocketAddr};
 use std::os::fd::AsRawFd;
 use tokio::net::{TcpListener, TcpStream};
 
 #[cfg(target_os = "macos")]
 use nix::sys::socket::getsockname;
-#[cfg(target_os = "macos")]
-use socket2::SockAddr;
 
 pub struct TcpListenerWithDst {
     inner: TcpListener,
@@ -26,6 +25,11 @@ impl TcpListenerWithDst {
         let (stream, peer_addr) = self.inner.accept().await?;
         let dst_ip = get_dst_ip(&stream)?;
         Ok((stream, peer_addr, dst_ip))
+    }
+
+    /// Get the local address of the listener
+    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        self.inner.local_addr()
     }
 }
 
@@ -65,14 +69,18 @@ fn get_dst_ip(stream: &TcpStream) -> std::io::Result<IpAddr> {
 
     #[cfg(target_os = "macos")]
     {
-        // On macOS, we use getsockname to get the local socket name
-        let sockaddr =
-            getsockname(fd).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let mut sockaddr: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+        let mut len = std::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
 
-        // Convert to socket2::SockAddr directly
-        let sock_addr = SockAddr::from(sockaddr);
+        if unsafe {
+            libc::getsockname(fd, &mut sockaddr as *mut _ as *mut libc::sockaddr, &mut len)
+        } < 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
 
-        // Extract the IP address from the socket address
+        let sock_addr = unsafe { SockAddr::new(sockaddr, len) };
+
         sock_addr
             .as_socket()
             .map(|addr| addr.ip())
